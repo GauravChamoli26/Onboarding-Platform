@@ -21,6 +21,7 @@ ON EVENT LOOP SCOPE
     when a session-scoped resource is used by a function-scoped test.
 """
 
+import os
 from collections.abc import AsyncIterator, Iterator
 from urllib.parse import urlparse, urlunparse
 from uuid import UUID
@@ -37,6 +38,39 @@ except ImportError:  # pragma: no cover - depends on installed version
     from testcontainers.postgres import PostgresContainer
 
 from platform_core.db.types import uuid7
+
+# ===========================================================================
+# Test environment, established at import time
+# ===========================================================================
+# pytest imports conftest.py BEFORE collecting any test module, which makes
+# this the only place these can be set in time.
+#
+# WHY THIS IS NECESSARY
+#     Importing certain application modules triggers configuration loading.
+#     `platform_core.auth.dev_stub` runs its environment guard at import — by
+#     design, so that a header-based auth stub can never be loaded in a
+#     deployed environment — and that guard calls get_settings(), which
+#     validates the entire Settings model including DATABASE_URL.
+#
+#     Locally that succeeds because .env exists. On a CI runner it does not:
+#     .env holds credentials and is correctly gitignored. Collection then fails
+#     before a single test runs, which is what broke the first CI build.
+#
+# WHY setdefault RATHER THAN ASSIGNMENT
+#     A developer who has already exported these keeps their values. This only
+#     fills the gap.
+#
+# WHY A PLACEHOLDER URL IS SAFE
+#     Nothing connects to a database at import time; the value only has to be
+#     present and well-formed for Settings to validate. The autouse
+#     `configure_application_settings` fixture replaces it with the real
+#     container URL before any test executes.
+os.environ.setdefault("APP_ENV", "local")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://placeholder:placeholder@localhost:5432/placeholder",
+)
+
 
 # Credentials for the deliberately unprivileged application role. Mirrors
 # scripts/init-db.sql — see that file for why this separation matters.
@@ -398,8 +432,6 @@ async def configure_application_settings(setup_database: str) -> AsyncIterator[N
     The engine is disposed at session end rather than per test, because tests
     sharing it must not have it torn down underneath them.
     """
-    import os
-
     from platform_core.config.settings import get_settings
     from platform_core.db.session import dispose_engine
 

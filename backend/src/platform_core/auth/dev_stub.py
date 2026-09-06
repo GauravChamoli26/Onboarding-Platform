@@ -27,7 +27,7 @@ THREE INDEPENDENT GUARDS
 
 from uuid import UUID
 
-from platform_core.config.settings import get_settings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The headers carrying tenant and user. Named to be conspicuous in logs and in
 # any proxy configuration — nobody should mistake these for normal API headers.
@@ -39,6 +39,39 @@ class DevStubInProductionError(RuntimeError):
     """Raised when the development auth stub is loaded outside local."""
 
 
+class _EnvironmentProbe(BaseSettings):
+    """
+    Reads APP_ENV alone, from the environment or .env.
+
+    WHY NOT USE get_settings()
+        The guard below needs exactly one field. Constructing the full Settings
+        model would require DATABASE_URL and everything else to be present, so a
+        process missing an unrelated setting fails on import with a validation
+        error about the wrong field — instead of either loading cleanly or
+        raising this module's own, explanatory error.
+
+        That coupling broke CI: a runner has no .env, because .env holds
+        credentials and is correctly gitignored, so importing this module
+        failed on a missing database URL that the guard does not care about.
+
+        A safety check must work in a partially configured process. That is
+        precisely when you least want a header-based auth stub loading quietly.
+
+    `extra="ignore"` so the other keys in .env do not cause a validation error
+    here, and the default matches Settings so behaviour is identical when
+    APP_ENV is absent.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    app_env: str = "local"
+
+
 def _assert_local_environment() -> None:
     """
     Refuse to operate outside APP_ENV=local.
@@ -46,11 +79,11 @@ def _assert_local_environment() -> None:
     Raises:
         DevStubInProductionError: in any environment other than local.
     """
-    settings = get_settings()
-    if settings.app_env != "local":
+    app_env = _EnvironmentProbe().app_env
+    if app_env != "local":
         raise DevStubInProductionError(
             f"The development authentication stub was loaded with "
-            f"APP_ENV={settings.app_env!r}. This module resolves the tenant "
+            f"APP_ENV={app_env!r}. This module resolves the tenant "
             f"from a request header and must never run outside local "
             f"development. If Phase 1 authentication is complete, delete "
             f"platform_core/auth/dev_stub.py rather than changing this check."
