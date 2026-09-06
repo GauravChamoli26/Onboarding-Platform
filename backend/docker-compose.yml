@@ -1,0 +1,41 @@
+# ============================================================================
+# docker-compose.yml — local development dependencies only
+# ----------------------------------------------------------------------------
+# WHAT THIS RUNS
+#   A single PostgreSQL 16 instance matching the production major version.
+#
+# WHY IT MATTERS
+#   ADR-002 makes row-level security the tenancy boundary. RLS and database
+#   triggers cannot be exercised against SQLite, so every developer and CI run
+#   needs a real PostgreSQL. This is the local equivalent of what testcontainers
+#   spins up in the test suite.
+#
+# NOT FOR PRODUCTION. Production is RDS, provisioned by Terraform (ADR-009).
+# ============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      # These are the SUPERUSER credentials, used only for migrations and setup.
+      # The application itself connects as app_user — see init-db.sql.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: onboarding
+    ports:
+      - "5432:5432"
+    volumes:
+      # Scripts in this directory run automatically on first container start,
+      # in alphabetical order. init-db.sql creates the non-superuser app role.
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Prevents the app or migrations from starting against a database that
+      # has not finished initialising.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d onboarding"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

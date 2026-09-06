@@ -1,0 +1,52 @@
+# ============================================================================
+# pre-commit — catch what CI would catch, before the commit exists
+# ----------------------------------------------------------------------------
+# WHY BOTHER WHEN CI ALREADY RUNS THESE
+#   A CI failure costs a push, a wait, a fix and another push. A pre-commit
+#   failure costs three seconds. The checks below are exactly the fast ones from
+#   the `quality` job, so a clean commit is very likely a green pipeline.
+#
+#   Tests are deliberately NOT here. They need Docker and take a minute, and a
+#   commit hook people find slow is a commit hook people bypass with --no-verify.
+#
+# INSTALL — once, from inside backend\ with the venv active:
+#     pip install pre-commit
+#     pre-commit install
+#
+# Run manually over everything:
+#     pre-commit run --all-files
+# ============================================================================
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      # Lint, fixing what can be fixed automatically.
+      - id: ruff
+        args: [--fix]
+        files: ^backend/
+      # Format.
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Catches a merge conflict marker committed by accident.
+      - id: check-merge-conflict
+      # Catches a large file added by accident — a database dump, a build
+      # artefact, a zip. Easy to do, annoying to remove from history.
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: end-of-file-fixer
+        files: ^backend/
+      - id: trailing-whitespace
+        files: ^backend/
+      - id: check-yaml
+      - id: check-toml
+      # ----------------------------------------------------------------
+      # Refuses to commit a private key. Worth having even though we store
+      # secrets in Secrets Manager — a key committed by accident stays in git
+      # history after deletion, so prevention is the only real control.
+      # ----------------------------------------------------------------
+      - id: detect-private-key

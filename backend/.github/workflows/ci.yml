@@ -1,0 +1,166 @@
+# ============================================================================
+# CI — runs on every push and pull request
+# ----------------------------------------------------------------------------
+# WHAT THIS ENFORCES
+#   The cross-cutting requirements in SDD §7.0, on every change, forever.
+#
+#   Two of these steps are standing compliance controls rather than ordinary
+#   tests, and are named separately so a failure is unmistakable in the run
+#   summary rather than buried in a list of eighty test names:
+#     - Tenant isolation  (Decision Log F-02)
+#     - Audit chain       (ADR-016)
+#
+# REPOSITORY LAYOUT THIS ASSUMES
+#   Repository root contains backend/ and docs/. Every job sets
+#   working-directory: backend. If the repository is rooted at backend/ instead,
+#   remove those lines.
+#
+# THREE JOBS, DELIBERATELY
+#   quality  — no Docker, under a minute. Fast feedback on most mistakes.
+#   tests    — needs Docker, slower.
+#   security — static analysis and dependency audit.
+#   Splitting them means a formatting error does not cost a container pull.
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel superseded runs on the same branch. Without this, three pushes in a
+# minute queue three full runs and you wait for all of them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches the local development version. Testing on a different minor than
+  # developers run invites failures nobody can reproduce.
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  quality:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Ruff format check
+        run: ruff format --check src tests alembic
+
+      - name: Ruff lint
+        run: ruff check src tests alembic
+
+      - name: Type check
+        run: mypy
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # Needs no container, so it runs first and fails fast.
+      - name: Unit tests
+        run: pytest -v -m "not integration"
+
+      # ------------------------------------------------------------------
+      # Standing compliance controls. If either is red, nothing merges.
+      # ------------------------------------------------------------------
+      - name: Tenant isolation suite
+        run: pytest -v -m integration tests/test_tenant_isolation.py
+
+      - name: Audit chain integrity
+        run: pytest -v -m integration tests/test_audit.py
+
+      - name: Migration parity and rollback
+        run: pytest -v -m integration tests/test_migrations.py
+
+      - name: Remaining integration tests
+        run: |
+          pytest -v -m integration \
+            --ignore=tests/test_tenant_isolation.py \
+            --ignore=tests/test_audit.py \
+            --ignore=tests/test_migrations.py
+
+  security:
+    name: Security checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install security tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install bandit pip-audit
+
+      # SDD §1.4: static analysis, blocking on high severity only. Bandit's
+      # low-severity findings are mostly noise on a codebase like this.
+      - name: Bandit
+        run: bandit -r src -ll
+
+      - name: Dependency audit
+        run: pip-audit --desc
+        # Advisory until there is a triage process. A new CVE in a transitive
+        # dependency should not block an unrelated pull request at 2am.
+        continue-on-error: true
+
+      # ------------------------------------------------------------------
+      # Development auth stub must never reach a deployable branch.
+      # ------------------------------------------------------------------
+      # dev_stub.py resolves the tenant from an HTTP header — the exact
+      # vulnerability row-level security exists to prevent. It is guarded three
+      # ways in code; this is the fourth, and the only one that notices the file
+      # is still present at merge time.
+      #
+      # Delete this step in Phase 1's auth unit, along with the stub.
+      # Tracking: PHASE1-AUTH-REMOVE-DEV-STUB
+      - name: Warn if development auth stub is still present
+        run: |
+          if [ -f src/platform_core/auth/dev_stub.py ]; then
+            echo "::warning file=backend/src/platform_core/auth/dev_stub.py::Development auth stub is still present. It resolves tenants from a request header and must be deleted before any deployment. Tracking: PHASE1-AUTH-REMOVE-DEV-STUB"
+          fi

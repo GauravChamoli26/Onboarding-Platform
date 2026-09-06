@@ -1,0 +1,43 @@
+# ============================================================================
+# .gitignore — repository root
+# ----------------------------------------------------------------------------
+# This sits at the top of the repository, alongside backend/ and docs/.
+# backend/ has its own .gitignore for Python-specific artefacts.
+# ============================================================================
+
+# --- Generated documentation ------------------------------------------------
+# The markdown in docs/ is the source of truth and diffs properly in pull
+# requests, which is what makes the change-control process work. PDFs are
+# rendered output: they bloat the repository and produce useless diffs.
+*.pdf
+*.docx
+
+# --- Archives ---------------------------------------------------------------
+# Nothing that arrives as a zip belongs in version control.
+*.zip
+*.tar.gz
+*.rar
+
+# --- Secrets ----------------------------------------------------------------
+# Security-relevant rather than housekeeping. A committed credential stays in
+# git history after deletion, so the only real control is never committing it.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+
+# --- Editors and OS ---------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Python (backend/ has its own, this is a backstop) ----------------------
+__pycache__/
+*.py[cod]
+.venv/

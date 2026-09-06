@@ -1,0 +1,195 @@
+# ============================================================================
+# pyproject.toml — project definition and dependency manifest
+# ----------------------------------------------------------------------------
+# WHAT THIS IS
+#   The single source of truth for dependencies, tooling config, and packaging.
+#   Governed by ADR-001 (Python/FastAPI stack).
+#
+# WHY THESE VERSIONS
+#   Pinned to major versions only. Renovate raises PRs for updates; pinning to
+#   exact patch versions here would make that noisy without adding safety,
+#   since the lockfile is what actually guarantees reproducibility.
+# ============================================================================
+
+[project]
+name = "onboarding-platform"
+version = "0.1.0"
+description = "Employee Onboarding & Recruitment Platform"
+requires-python = ">=3.12"
+
+dependencies = [
+    # --- Web layer -----------------------------------------------------------
+    "fastapi>=0.115",           # ADR-001: async-native, generates OpenAPI
+    "uvicorn[standard]>=0.32",  # ASGI server
+
+    # --- Data layer ----------------------------------------------------------
+    "sqlalchemy[asyncio]>=2.0",  # ADR-001: explicit control over constraints
+    "asyncpg>=0.30",             # async PostgreSQL driver
+    "alembic>=1.14",             # migrations — RLS policies are hand-written
+    # Alembic's migration context is synchronous, so migrations use psycopg
+    # while the application uses asyncpg. See alembic/env.py.
+    "psycopg[binary]>=3.2",
+
+    # --- Validation ----------------------------------------------------------
+    # ADR-001: one schema layer for API, events, LLM output and vendor payloads
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",    # environment-backed configuration
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",      # async test support
+    "testcontainers[postgres]>=4.8",  # ADR-002: RLS cannot be tested on SQLite
+    "ruff>=0.7",                 # lint + format
+    "mypy>=1.13",                # strict on the domain layer
+    "greenlet>=3.1",             # required by SQLAlchemy async
+    "httpx>=0.28",               # in-process ASGI test client
+]
+
+# ============================================================================
+# TOOLING CONFIGURATION
+# ============================================================================
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E,F = pyflakes/pycodestyle errors · I = import sorting · B = bugbear
+# UP = pyupgrade · N = naming conventions
+select = ["E", "F", "I", "B", "UP", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use bare `assert`, long parametrised names, and fixtures
+# that shadow imported names.
+"tests/*" = ["N802", "N803"]
+
+# Alembic generates module-level names that do not follow our conventions, and
+# migration bodies are long by nature.
+"alembic/*" = ["E501", "N999"]
+
+# ----------------------------------------------------------------------------
+# N811: "constant imported as non-constant"
+# ----------------------------------------------------------------------------
+# Triggered by `from sqlalchemy.dialects.postgresql import UUID as PgUUID`.
+#
+# pep8-naming assumes an ALL-CAPS name is a constant. SQLAlchemy's UUID is a
+# CLASS, so the premise of the rule does not hold here, and the alias exists for
+# a good reason: it distinguishes PostgreSQL's UUID column type from the
+# standard library's `uuid.UUID`, both of which appear in these modules.
+#
+# The alternative is renaming to PG_UUID across every model to satisfy the
+# heuristic — changing correct code to appease a rule that is wrong about what
+# it is looking at. A scoped suppression with a reason is the better trade.
+#
+# Scoped to the files that alias SQLAlchemy types, not applied globally, so a
+# genuine N811 elsewhere still fails the build.
+"src/platform_core/models/*" = ["N811"]
+"src/platform_core/db/base.py" = ["N811"]
+
+# ============================================================================
+# B008: function call in an argument default
+# ----------------------------------------------------------------------------
+# flake8-bugbear's warning about mutable default arguments — a real bug in
+# ordinary Python, and precisely how FastAPI expresses dependency injection:
+#
+#     async def handler(session: AsyncSession = Depends(db_session)):
+#
+# The call is evaluated once at import and produces an immutable marker object
+# that FastAPI resolves per request. Nothing is shared between calls, so the
+# hazard B008 exists to catch is not present.
+#
+# `extend-immutable-calls` is ruff's documented mechanism for this. It is scoped
+# to the specific FastAPI constructs rather than disabling B008 entirely, so an
+# actual mutable default elsewhere still fails the build.
+# ============================================================================
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Security",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["platform_core"]
+
+# ============================================================================
+# mypy
+# ----------------------------------------------------------------------------
+# Deliberately NOT `strict = true` on day one.
+#
+# Full strict mode on a codebase using SQLAlchemy's declarative mapping produces
+# a large number of findings that are about SQLAlchemy's typing rather than
+# about our correctness — `Mapped[dict]` trips disallow_any_generics, for
+# instance. Turning it all on at once means either a day of annotations before
+# anything is green, or a wave of `# type: ignore` that permanently blinds the
+# checker.
+#
+# The settings below catch the errors that matter — missing annotations, unsafe
+# Optional handling, unreachable code — and the strictness is tightened module
+# by module as each area settles. The overrides at the bottom are where that
+# progress is recorded.
+# ============================================================================
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["platform_core"]
+
+# Every function must be annotated. This is the rule that does most of the work.
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+# Optional handling. `no_implicit_optional` is the one that catches
+# `def f(x: str = None)`, which is a real bug rather than a style point.
+no_implicit_optional = true
+strict_optional = true
+
+# Catch dead code and pointless suppressions.
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+warn_return_any = true
+
+# Third-party stubs are often incomplete or absent. Failing on those tells us
+# nothing about our own code.
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# SQLAlchemy declarative models. `Mapped[dict]` and `Mapped[list[str]]` are the
+# idiomatic form, and they trip disallow_any_generics for reasons that are not
+# about our correctness.
+module = "platform_core.models.*"
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]
+# Alembic migration modules are generated scaffolding with a fixed shape.
+module = "alembic.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"           # no need to decorate every async test
+
+# pytest-asyncio 1.0 removed the old `event_loop` fixture override. Loop scope
+# is now configured here. The whole suite shares one session-scoped loop:
+# every test talks to the same container, so there is nothing to isolate
+# between loops, and a shared loop avoids cross-loop errors when a
+# session-scoped resource is used by a function-scoped test.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+testpaths = ["tests"]
+# Markers keep the fast unit suite separable from the slower container-backed one
+markers = [
+    "integration: requires a real PostgreSQL container",
+]
