@@ -88,6 +88,11 @@ TENANT_SCOPED_TABLES = (
     "outbox_events",
     "processed_events",
     "audit_entries",
+    "sla_policies",
+    "holidays",
+    "approval_delegations",
+    "approval_requests",
+    "approval_actions",
 )
 
 
@@ -318,6 +323,122 @@ async def setup_database(postgres_container: PostgresContainer) -> AsyncIterator
         """)
         )
 
+        # --- Approval engine (mirrors migration 0005) ------------------------
+        # Order matters: approval_requests references both approval_delegations
+        # and sla_policies.
+        await conn.execute(
+            text("""
+            CREATE TABLE sla_policies (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL
+                    REFERENCES organizations(id) ON DELETE RESTRICT,
+                sla_type VARCHAR(32) NOT NULL,
+                duration_business_days INTEGER NOT NULL,
+                reminder_offsets INTEGER[] NOT NULL DEFAULT '{}',
+                escalation_target VARCHAR(32) NOT NULL DEFAULT 'HRQueue',
+                escalation_target_user_id VARCHAR(64),
+                escalation_after_misses INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT uq_sla_policies_organization_id
+                    UNIQUE (organization_id, sla_type),
+                CONSTRAINT ck_sla_policies_duration_business_days
+                    CHECK (duration_business_days >= 0)
+            )
+        """)
+        )
+        await conn.execute(
+            text("""
+            CREATE TABLE holidays (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL
+                    REFERENCES organizations(id) ON DELETE RESTRICT,
+                holiday_date DATE NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                region VARCHAR(64),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT uq_holidays_organization_id
+                    UNIQUE (organization_id, holiday_date, region)
+            )
+        """)
+        )
+        await conn.execute(
+            text("""
+            CREATE TABLE approval_delegations (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL
+                    REFERENCES organizations(id) ON DELETE RESTRICT,
+                delegator_user_id UUID NOT NULL
+                    REFERENCES users(id) ON DELETE CASCADE,
+                delegate_user_id UUID NOT NULL
+                    REFERENCES users(id) ON DELETE CASCADE,
+                capability VARCHAR(64) NOT NULL,
+                valid_from DATE NOT NULL,
+                valid_to DATE NOT NULL,
+                reason TEXT,
+                revoked_at TIMESTAMPTZ,
+                revoked_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT ck_approval_delegations_valid_range
+                    CHECK (valid_to >= valid_from),
+                CONSTRAINT ck_approval_delegations_not_self
+                    CHECK (delegator_user_id <> delegate_user_id)
+            )
+        """)
+        )
+        await conn.execute(
+            text("""
+            CREATE TABLE approval_requests (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL
+                    REFERENCES organizations(id) ON DELETE RESTRICT,
+                approval_type VARCHAR(32) NOT NULL,
+                entity_type VARCHAR(64) NOT NULL,
+                entity_id UUID NOT NULL,
+                application_id UUID,
+                required_capability VARCHAR(64) NOT NULL,
+                assigned_to_user_id UUID NOT NULL
+                    REFERENCES users(id) ON DELETE RESTRICT,
+                resolved_via_delegation_id UUID
+                    REFERENCES approval_delegations(id) ON DELETE SET NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'Pending',
+                sla_policy_id UUID REFERENCES sla_policies(id) ON DELETE SET NULL,
+                due_at TIMESTAMPTZ,
+                escalated_at TIMESTAMPTZ,
+                escalated_to_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                reminder_count INTEGER NOT NULL DEFAULT 0,
+                context_snapshot JSONB NOT NULL DEFAULT '{}',
+                requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                resolved_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT ck_approval_requests_status
+                    CHECK (status IN ('Pending', 'Approved', 'Rejected',
+                                      'Escalated', 'Withdrawn', 'Expired'))
+            )
+        """)
+        )
+        await conn.execute(
+            text("""
+            CREATE TABLE approval_actions (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL
+                    REFERENCES organizations(id) ON DELETE RESTRICT,
+                approval_request_id UUID NOT NULL
+                    REFERENCES approval_requests(id) ON DELETE CASCADE,
+                action VARCHAR(16) NOT NULL,
+                actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                comment TEXT,
+                acted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        )
+
         # --- Audit log (mirrors migration 0004) ------------------------------
         await conn.execute(
             text("""
@@ -522,6 +643,13 @@ async def two_organizations(
             await conn.execute(
                 text("ALTER TABLE audit_entries ENABLE TRIGGER trg_audit_entries_immutable")
             )
+            # Reverse dependency order: actions reference requests, requests
+            # reference delegations and policies, all reference users.
+            await conn.execute(text("DELETE FROM approval_actions"))
+            await conn.execute(text("DELETE FROM approval_requests"))
+            await conn.execute(text("DELETE FROM approval_delegations"))
+            await conn.execute(text("DELETE FROM holidays"))
+            await conn.execute(text("DELETE FROM sla_policies"))
             await conn.execute(text("DELETE FROM processed_events"))
             await conn.execute(text("DELETE FROM outbox_events"))
             await conn.execute(text("DELETE FROM role_assignments"))

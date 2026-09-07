@@ -308,6 +308,11 @@ async def test_rls_is_forced_on_tenant_tables(
         "outbox_events",
         "processed_events",
         "audit_entries",
+        "sla_policies",
+        "holidays",
+        "approval_delegations",
+        "approval_requests",
+        "approval_actions",
     ]
 
     async with session_factory() as s, s.begin():
