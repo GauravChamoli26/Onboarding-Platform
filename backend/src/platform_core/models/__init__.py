@@ -21,6 +21,14 @@ from platform_core.models.audit_entry import GENESIS_HASH, AuditEntry
 from platform_core.models.delegation import ApprovalDelegation
 from platform_core.models.feature_flag import FeatureFlag, FlagKey
 from platform_core.models.identity_provider import IdentityProviderConfig, IdpProtocol
+from platform_core.models.notification import (
+    DltApprovalStatus,
+    NotificationChannel,
+    NotificationLog,
+    NotificationStatus,
+    NotificationTemplate,
+    RecipientType,
+)
 from platform_core.models.organization import Organization
 from platform_core.models.outbox_event import OutboxEvent, OutboxStatus
 from platform_core.models.processed_event import ProcessedEvent
@@ -50,7 +58,13 @@ __all__ = [
     "FlagKey",
     "IdentityProviderConfig",
     "IdpProtocol",
+    "DltApprovalStatus",
+    "NotificationChannel",
+    "NotificationLog",
+    "NotificationStatus",
+    "NotificationTemplate",
     "Organization",
+    "RecipientType",
     "OutboxEvent",
     "OutboxStatus",
     "ProcessedEvent",

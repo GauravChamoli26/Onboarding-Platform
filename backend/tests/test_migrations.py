@@ -50,6 +50,8 @@ EXPECTED_TABLES = {
     "approval_delegations",
     "approval_requests",
     "approval_actions",
+    "notification_templates",
+    "notification_logs",
 }
 TENANT_SCOPED_TABLES = {
     "feature_flags",
@@ -65,6 +67,8 @@ TENANT_SCOPED_TABLES = {
     "approval_delegations",
     "approval_requests",
     "approval_actions",
+    "notification_templates",
+    "notification_logs",
 }
 
 
@@ -141,7 +145,7 @@ async def test_migrations_apply_cleanly(migrated_database: str) -> None:
     engine = create_async_engine(migrated_database)
     async with engine.connect() as conn:
         result = await conn.execute(text("SELECT version_num FROM alembic_version"))
-        assert result.scalar_one() == "0005"
+        assert result.scalar_one() == "0006"
     await engine.dispose()
 
 

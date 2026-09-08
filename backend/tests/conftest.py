@@ -93,6 +93,8 @@ TENANT_SCOPED_TABLES = (
     "approval_delegations",
     "approval_requests",
     "approval_actions",
+    "notification_templates",
+    "notification_logs",
 )
 
 
@@ -319,6 +321,71 @@ async def setup_database(postgres_container: PostgresContainer) -> AsyncIterator
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 CONSTRAINT uq_processed_events_consumer_name
                     UNIQUE (consumer_name, event_id)
+            )
+        """)
+        )
+
+        # --- Notifications (mirrors migration 0006) --------------------------
+        await conn.execute(
+            text("""
+            CREATE TABLE notification_templates (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL
+                    REFERENCES organizations(id) ON DELETE RESTRICT,
+                template_key VARCHAR(64) NOT NULL,
+                version INTEGER NOT NULL,
+                channel VARCHAR(16) NOT NULL,
+                dlt_template_id VARCHAR(64),
+                dlt_entity_id VARCHAR(64),
+                dlt_registered_at DATE,
+                dlt_approval_status VARCHAR(16) NOT NULL DEFAULT 'NotRequired',
+                subject VARCHAR(255),
+                body TEXT NOT NULL,
+                variables VARCHAR(64)[] NOT NULL DEFAULT '{}',
+                locale VARCHAR(16) NOT NULL DEFAULT 'en-IN',
+                is_active BOOLEAN NOT NULL DEFAULT true,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT uq_notification_templates_key
+                    UNIQUE (organization_id, template_key, channel, locale, version),
+                CONSTRAINT ck_notification_templates_channel
+                    CHECK (channel IN ('Email', 'Slack', 'SMS')),
+                CONSTRAINT ck_notification_templates_dlt_status
+                    CHECK (dlt_approval_status IN
+                           ('NotRequired', 'Pending', 'Approved', 'Rejected')),
+                CONSTRAINT ck_notification_templates_sms_needs_dlt_id
+                    CHECK (channel <> 'SMS' OR dlt_approval_status <> 'Approved'
+                           OR dlt_template_id IS NOT NULL)
+            )
+        """)
+        )
+        await conn.execute(
+            text("""
+            CREATE TABLE notification_logs (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL
+                    REFERENCES organizations(id) ON DELETE RESTRICT,
+                recipient_type VARCHAR(16) NOT NULL,
+                recipient_ref UUID NOT NULL,
+                channel VARCHAR(16) NOT NULL,
+                notification_template_id UUID
+                    REFERENCES notification_templates(id) ON DELETE RESTRICT,
+                triggering_event_id UUID,
+                correlation_id VARCHAR(64) NOT NULL,
+                provider VARCHAR(32),
+                provider_message_id VARCHAR(128),
+                status VARCHAR(16) NOT NULL DEFAULT 'Queued',
+                failure_reason TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                portal_token_id UUID,
+                context JSONB NOT NULL DEFAULT '{}',
+                sent_at TIMESTAMPTZ,
+                queued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT ck_notification_logs_status
+                    CHECK (status IN ('Queued', 'Sent', 'Delivered', 'Bounced',
+                                      'Failed', 'Suppressed'))
             )
         """)
         )
@@ -645,6 +712,8 @@ async def two_organizations(
             )
             # Reverse dependency order: actions reference requests, requests
             # reference delegations and policies, all reference users.
+            await conn.execute(text("DELETE FROM notification_logs"))
+            await conn.execute(text("DELETE FROM notification_templates"))
             await conn.execute(text("DELETE FROM approval_actions"))
             await conn.execute(text("DELETE FROM approval_requests"))
             await conn.execute(text("DELETE FROM approval_delegations"))
