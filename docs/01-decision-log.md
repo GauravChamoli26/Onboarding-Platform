@@ -93,6 +93,29 @@ The purpose of this log is that a year from now, someone can reconstruct why the
 | **F-02** | Two-tenant isolation suite in CI from week 2, permanently | Cross-tenant leakage is the worst available failure. It is asserted continuously, not reviewed |
 | **F-03** | QA capability from Phase 1, not Phase 8 | The cross-cutting suites run from the moment the platform core exists |
 | **F-04** | Team sizing owned outside this documentation set | Capacity assumptions are recorded only so timelines can be rescaled |
+| **F-05** | Every phase is audited against the roadmap's own deliverable list before the next phase starts | A phase-completion audit before Phase 2 found three Phase 1 items silently skipped — Candidate Portal Token, notification service, SAML/OIDC. All three were in the roadmap's Phase 1 bullet list. Counting units built is not the same as checking them against what the phase was defined as |
+| **F-06** | Anything deferred gets an entry in section I with a named trigger | Same finding. The three gaps were not decisions, they were omissions, and an omission looks exactly like a deferral until someone checks |
+
+---
+
+## I. Deferred with triggers
+
+Things deliberately not built yet, each with the event that makes them required.
+
+**A deferral without a trigger is forgetting.** This section exists because that
+happened: three Phase 1 deliverables were quietly skipped and only found by an
+audit before Phase 2. The trigger column is the point of the table — an item
+here without one should be treated as an open bug in this log.
+
+| ID | Deferred | Why it was safe to defer | Trigger — required by |
+|---|---|---|---|
+| **X-01** | **SAML/OIDC service provider.** `IdentityProviderConfig` is modelled; the flow is not built. Authentication runs on the development stub | The stub is hard-gated to `APP_ENV=local` with three independent guards plus a CI warning. Everything through Phase 5 is demonstrable locally | **The design partner's first login.** Nothing outside the team can authenticate until this exists. Budget two weeks (ADR-006) |
+| **X-02** | **Candidate Portal Token.** Designed in ADR-010, not implemented | Nothing before Module 6 touches a candidate-facing surface | **Phase 6 — document collection.** It is the entire candidate security boundary; Module 6 cannot ship without it |
+| **X-03** | **Real notification channel adapters** (SES/SendGrid, Slack, Exotel) | The service, template resolution, DLT gating and logging are complete and tested against a recording adapter. Only the final hop is stubbed. Unconfigured channels log `Suppressed`, not `Failed` | **Vendor contracts.** Exotel additionally blocked on DLT registration, which is the longest external lead time in the project |
+| **X-04** | **Terraform, WAF, VPC endpoints, per-service IAM** | Nothing is deployed. There is no environment for these to protect | **First deployed environment.** Phase 0's security baseline lands with it, not before |
+| **X-05** | **semgrep and Trivy in CI.** `bandit` and `pip-audit` are wired; these two are not | Bandit covers Python static analysis; Trivy scans container images, and no image is built yet | **semgrep: next CI change** (it is ten minutes). **Trivy: first container build** |
+| **X-06** | **EventBridge publisher adapter.** The `EventPublisher` interface and an in-process implementation exist | The outbox, relay, consumer idempotency and DLQ handling — the parts with real bugs in them — are identical either way | **First deployed environment** |
+| **X-07** | **Per-organisation weekend configuration.** `business_days` supports it; nothing writes it | Saturday/Sunday is correct for the design partner. Six-day weeks and working-Saturday exceptions are supported in the calculation | **First customer with a six-day week.** Data change, not code |
 
 ---
 
@@ -109,6 +132,7 @@ Kept deliberately. A decision log that only records what survived is a marketing
 | **G-05** | Joiner records retained for the statutory period | **Handoff at +90 days, then purge** (C-04) | The statutory clock runs from end of employment, which this platform never observes. "Retain for N years from exit" degrades into retain-forever |
 | **G-06** | Terraform vs CDK Python left genuinely open | **Terraform confirmed** (A-11) | The CDK case rested entirely on having no dedicated DevOps capacity. That premise was wrong |
 | **G-07** | `kit_type` as a bare string on Dispatch Record | **Kit Catalogue Item, Client Kit, Organization Kit Profile** | The model was generic in the one area where the product has a real differentiator, and had no representation of branding lead time |
+| **G-08** | Reuse a running PostgreSQL for tests via `TEST_DATABASE_URL`, to skip container startup | **Reverted.** The suite always starts a throwaway container | The implementation ran `DROP SCHEMA public CASCADE` on a database other connections were attached to. PostgreSQL terminates those connections and asyncpg reports `unexpected connection_lost()` — every test errored. The failure mode existed *only* on the path the feature was meant to accelerate, which is the path that was never exercised before shipping it. Twenty seconds a run did not justify a second code path through test setup |
 
 ---
 
@@ -124,6 +148,50 @@ Kept deliberately. A decision log that only records what survived is a marketing
 | **H-06** | Permanent fairness sign-off owner | Leadership | Before scale | Project lead, interim. A reviewer assessing their own system is a weak control |
 | **H-07** | Naukri RMS subscription — justified at launch volumes? | Product | Week 12 | Career portal is live; Naukri may not earn its cost initially |
 | **H-08** | Catalogue categories and tiers confirmed against Gifteko's internal structure | Gifteko ops | Before Phase 2 | Inferred from six featured products on the public site |
+
+---
+
+## I. Deferred build items
+
+Work that is designed and specified but deliberately not built yet. Every entry
+names a **trigger** — the condition that makes it required — because a
+deferral without one is indistinguishable from forgetting.
+
+That is not hypothetical. An audit before Phase 2 found three items from the
+Phase 1 deliverable list absent, and they were absent precisely because they had
+been deferred implicitly rather than recorded here. One of them, the
+notification service, turned out to block Phase 2.
+
+| ID | Item | Designed in | Trigger | Estimate |
+|---|---|---|---|---|
+| **I-01** | **SAML 2.0 / OIDC service provider.** Per-organisation IdP configuration, JIT provisioning, session establishment | ADR-006, SDD §B4. `IdentityProviderConfig` model exists; no flow | **Before the design partner's first login.** Nobody outside the team can authenticate until this exists | ~2 weeks |
+| **I-02** | **Candidate Portal Token.** Issue, hash, scope, expire, revoke, validate; exchange-on-first-use for a scoped session cookie | ADR-010, SDD §B5. Not built | **Before Phase 6** (document collection). It is the entire candidate-facing security boundary | ~1 week |
+| **I-03** | **Real notification channel adapters.** SES or SendGrid, Slack, Exotel SMS | SDD §3.10–3.11. Service, template resolution, DLT gating and logging are complete; only the final hop is stubbed | **Email: before the design partner.** SMS: after DLT registration completes (Track B, week 10) | ~3 days each |
+| **I-04** | **EventBridge publisher.** Currently in-process dispatch behind the same interface | ADR-004, SDD §2.2 | **Before deployment.** Local and CI need no message bus | ~2 days |
+| **I-05** | **Terraform / infrastructure.** VPC, RDS, ECS, WAF, VPC endpoints, IAM roles, in-region Terraform state | ADR-009, ADR-014, Roadmap Phase 0 | **Before anything is deployed.** Nothing runs outside a laptop today | ~1 week |
+| **I-06** | **semgrep and Trivy in CI.** Roadmap names both; CI currently runs bandit and pip-audit | Roadmap Phase 0, SDD §1.4 | Cheap now, no dependency. Do it opportunistically | ~1 hour |
+
+### The development auth stub
+
+**I-01 has a companion that must be deleted, not merely superseded.**
+`platform_core/auth/dev_stub.py` resolves the tenant and user from HTTP headers
+— the exact vulnerability row-level security exists to prevent. It is currently
+held in place by four independent guards: an import-time environment check, a
+startup check in the app factory, a test asserting the first guard fires, and a
+CI step that warns while the file exists.
+
+When I-01 lands, the file is **deleted**. A guard left in place is a guard
+someone can weaken. Everything to remove is tagged `PHASE1-AUTH-REMOVE-DEV-STUB`.
+
+---
+
+## J. Process decisions
+
+| ID | Decision | Rationale |
+|---|---|---|
+| **J-01** | Branch protection on `main` deferred | With one contributor and `ci-prep.ps1` run before every push, a pull request with zero required approvals is ceremony rather than review. **Trigger: the second person who can push** — most likely the frontend engineer in Phase 2 — or a design partner running real hires, whichever comes first |
+| **J-02** | Every phase ends with an audit against the roadmap's own deliverable list, not against what was built | The Phase 1 audit found three gaps. Checking work against memory of the work is not a check |
+| **J-03** | A change to test infrastructure is exercised on the path it changes, before it ships | G-08. A test-setup optimisation was written, documented and handed over without once being run in the configuration it enabled. Its only failure mode lived there |
 
 ---
 

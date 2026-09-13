@@ -13,7 +13,7 @@ Start here. This page explains what each document is for, who it is for, and whi
 | # | Document | Answers | Primary audience | Status |
 |---|---|---|---|---|
 | **00** | Documentation Index | "Where do I find X?" | Everyone | Living |
-| **01** | Decision Log | "Why is it like this, and who decided?" | Everyone | Living |
+| **01** | Decision Log | "Why is it like this, and who decided?" — including what is deliberately *not* built yet, and what triggers it | Everyone | Living |
 | **02** | Build Spec V3.3 | "What does the product do?" | Product, HR, engineering, sales | **Sealed** |
 | **03** | Solution Design Document 3.0 | "How is it built?" | Engineering | **Sealed** |
 | **04** | Architecture Decision Records | "Why this technology and not that one?" | Engineering | Living |
@@ -52,6 +52,9 @@ SDD §1.4 (Application Security) and §6 (Non-Functional), plus ADR-002, ADR-010
 
 **"Why did we decide X?"**
 01 (Decision Log) always. Every decision has an ID, a date, a rationale and a reversibility rating.
+
+**"Is this built yet?"**
+01 §I (Deferred build items). Anything designed but not built is listed there with the trigger that makes it required. If it is not in §I and not built, that is a gap rather than a decision — raise it.
 
 ---
 
